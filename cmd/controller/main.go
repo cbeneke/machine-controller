@@ -44,6 +44,8 @@ import (
 	"k8s.io/client-go/tools/leaderelection"
 	"k8s.io/client-go/tools/leaderelection/resourcelock"
 	"k8s.io/client-go/tools/record"
+	"sigs.k8s.io/cluster-api/pkg/controller/machineset"
+	machinesetinformers "sigs.k8s.io/cluster-api/pkg/controller/sharedinformers"
 
 	"github.com/golang/glog"
 	"github.com/heptiolabs/healthcheck"
@@ -230,6 +232,16 @@ func main() {
 
 	ctx, ctxDone := context.WithCancel(context.Background())
 	var g run.Group
+	{
+		g.Add(func() error {
+			machineSetInformer := machinesetinformers.NewSharedInformers(cfg, ctx.Done())
+			machineSetController := machineset.NewMachineSetController(cfg, machineSetInformer)
+			machineSetController.Run(ctx.Done())
+			return nil
+		}, func(err error) {
+			ctxDone()
+		})
+	}
 	{
 		prometheusRegistry.MustRegister(machinecontroller.NewMachineCollector(
 			machineInformerFactory.Machine().V1alpha1().Machines().Lister(),
