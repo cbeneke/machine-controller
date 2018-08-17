@@ -253,7 +253,8 @@ systemd:
           --protect-kernel-defaults=true \
           --authorization-mode=Webhook \
           --anonymous-auth=false \
-          --client-ca-file=/etc/kubernetes/ca.crt
+          --client-ca-file=/etc/kubernetes/ca.crt \
+          --feature-gates=RotateKubeletServerCertificate=true,RotateKubeletClientCertificate=true
         ExecStop=-/usr/bin/rkt stop --uuid-file=/var/cache/kubelet-pod.uuid
         Restart=always
         RestartSec=10

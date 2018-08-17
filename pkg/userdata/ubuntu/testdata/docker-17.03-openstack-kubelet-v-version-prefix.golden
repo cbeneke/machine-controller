@@ -214,7 +214,9 @@ write_files:
       --read-only-port=0 \
       --protect-kernel-defaults=true \
       --cluster-dns=10.10.10.10 \
-      --cluster-domain=cluster.local
+      --cluster-domain=cluster.local \
+      --feature-gates=RotateKubeletServerCertificate=true,RotateKubeletClientCertificate=true
+
 
 - path: "/etc/systemd/system/kubelet.service.d/20-extra.conf"
   permissions: "0644"

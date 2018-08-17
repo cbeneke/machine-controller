@@ -229,7 +229,8 @@ write_files:
       --read-only-port=0 \
       --protect-kernel-defaults=true \
       --cluster-dns={{ ipSliceToCommaSeparatedString .ClusterDNSIPs }} \
-      --cluster-domain=cluster.local
+      --cluster-domain=cluster.local \
+      --feature-gates=RotateKubeletServerCertificate=true,RotateKubeletClientCertificate=true
 
 {{- if semverCompare "<1.11.0" .KubeletVersion }}
 - path: "/etc/systemd/system/kubelet.service.d/20-extra.conf"
