@@ -9,6 +9,7 @@ import (
 
 	"github.com/Masterminds/semver"
 	ctconfig "github.com/coreos/container-linux-config-transpiler/config"
+	ignitionUtils "github.com/coreos/ignition/config/util"
 	ignition "github.com/coreos/ignition/config/v2_1"
 	ignitionTypes "github.com/coreos/ignition/config/v2_1/types"
 	"github.com/golang/glog"
@@ -164,6 +165,9 @@ func (p Provider) UserData(
 			},
 		},
 		Networkd: networkdConfig(pconfig.Network),
+		Systemd: ignitionTypes.Systemd{
+			Units: systemdUnits(coreosConfig),
+		},
 	}
 
 	mergedConfig := ignition.Append(iCfg, ignCfg)
@@ -224,18 +228,33 @@ Gateway=%s
 	}
 }
 
+func systemdUnits(coreosConfig *Config) []ignitionTypes.Unit {
+	var units []ignitionTypes.Unit
+
+	if coreosConfig != nil && coreosConfig.DisableAutoUpdate {
+		units = append(units,
+			ignitionTypes.Unit{
+				Name: "update-engine.service",
+				Mask: true,
+			},
+			ignitionTypes.Unit{
+				Name: "locksmithd.service",
+				Mask: true,
+			},
+		)
+	}
+
+	units = append(units, ignitionTypes.Unit{
+		Name:    "docker.service",
+		Enabled: ignitionUtils.BoolToPtr(true),
+	})
+
+	return units
+}
+
 const ctTemplate = `
 systemd:
   units:
-{{- if .CoreOSConfig.DisableAutoUpdate }}
-    - name: update-engine.service
-      mask: true
-    - name: locksmithd.service
-      mask: true
-{{ end }}
-    - name: docker.service
-      enabled: true
-
     - name: kubelet.service
       enabled: true
       dropins:
