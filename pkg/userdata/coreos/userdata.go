@@ -163,6 +163,7 @@ func (p Provider) UserData(
 				},
 			},
 		},
+		Networkd: networkdConfig(pconfig.Network),
 	}
 
 	mergedConfig := ignition.Append(iCfg, ignCfg)
@@ -192,26 +193,38 @@ func sshAuthorizedKeys(s []string) []ignitionTypes.SSHAuthorizedKey {
 	return k
 }
 
+func networkdConfig(n *providerconfig.NetworkConfig) ignitionTypes.Networkd {
+	if n == nil {
+		return ignitionTypes.Networkd{}
+	}
+
+	unitContents := fmt.Sprintf(`[Match]
+# Because of difficulty predicting specific NIC names on different cloud providers,
+# we only support static addressing on VSphere. There should be a single NIC attached
+# that we will match by name prefix 'en' which denotes ethernet devices.
+Name=en*
+
+[Network]
+DHCP=no
+Address=%s
+Gateway=%s
+`, n.CIDR, n.Gateway)
+
+	for _, dnsServer := range n.DNS.Servers {
+		unitContents += fmt.Sprintf("DNS=%s\n", dnsServer)
+	}
+
+	return ignitionTypes.Networkd{
+		Units: []ignitionTypes.Networkdunit{
+			{
+				Name:     "static-nic.network",
+				Contents: unitContents,
+			},
+		},
+	}
+}
+
 const ctTemplate = `
-{{- if .ProviderConfig.Network }}
-networkd:
-  units:
-    - name: static-nic.network
-      contents: |
-        [Match]
-        # Because of difficulty predicting specific NIC names on different cloud providers,
-        # we only support static addressing on VSphere. There should be a single NIC attached
-        # that we will match by name prefix 'en' which denotes ethernet devices.
-        Name=en*
-
-        [Network]
-        DHCP=no
-        Address={{ .ProviderConfig.Network.CIDR }}
-        Gateway={{ .ProviderConfig.Network.Gateway }}
-        {{range .ProviderConfig.Network.DNS.Servers}}DNS={{.}}
-        {{end}}
-{{- end }}
-
 systemd:
   units:
 {{- if .CoreOSConfig.DisableAutoUpdate }}
