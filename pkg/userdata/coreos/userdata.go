@@ -155,6 +155,14 @@ func (p Provider) UserData(
 		Ignition: ignitionTypes.Ignition{
 			Version: "2.1.0",
 		},
+		Passwd: ignitionTypes.Passwd{
+			Users: []ignitionTypes.PasswdUser{
+				{
+					Name:              "core",
+					SSHAuthorizedKeys: sshAuthorizedKeys(pconfig.SSHPublicKeys),
+				},
+			},
+		},
 	}
 
 	mergedConfig := ignition.Append(iCfg, ignCfg)
@@ -176,14 +184,15 @@ func (p Provider) UserData(
 	return string(out), nil
 }
 
-const ctTemplate = `
-passwd:
-  users:
-    - name: core
-      ssh_authorized_keys:
-        {{range .ProviderConfig.SSHPublicKeys}}- {{.}}
-        {{end}}
+func sshAuthorizedKeys(s []string) []ignitionTypes.SSHAuthorizedKey {
+	k := make([]ignitionTypes.SSHAuthorizedKey, len(s))
+	for i := 0; i < len(s); i++ {
+		k[i] = ignitionTypes.SSHAuthorizedKey(s[i])
+	}
+	return k
+}
 
+const ctTemplate = `
 {{- if .ProviderConfig.Network }}
 networkd:
   units:
