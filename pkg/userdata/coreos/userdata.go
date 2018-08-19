@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net"
+	"strings"
 	"text/template"
 
 	"github.com/Masterminds/semver"
@@ -13,6 +14,7 @@ import (
 	ignition "github.com/coreos/ignition/config/v2_1"
 	ignitionTypes "github.com/coreos/ignition/config/v2_1/types"
 	"github.com/golang/glog"
+	"github.com/vincent-petithory/dataurl"
 	"k8s.io/apimachinery/pkg/runtime"
 	clientcmdapi "k8s.io/client-go/tools/clientcmd/api"
 
@@ -173,6 +175,9 @@ func (p Provider) UserData(
 		Systemd: ignitionTypes.Systemd{
 			Units: systemdUnitsData,
 		},
+		Storage: ignitionTypes.Storage{
+			Files: getFileEntries(kubeconfigString, cpConfig, kubernetesCACert, spec),
+		},
 	}
 
 	mergedConfig := ignition.Append(iCfg, ignCfg)
@@ -200,6 +205,68 @@ func sshAuthorizedKeys(s []string) []ignitionTypes.SSHAuthorizedKey {
 		k[i] = ignitionTypes.SSHAuthorizedKey(s[i])
 	}
 	return k
+}
+
+func getFileEntries(kubeconfigString, cpConfig, kubernetesCACert string, machineSpec machinesv1alpha1.MachineSpec) []ignitionTypes.File {
+	files := []ignitionTypes.File{
+		encodeFile("/etc/systemd/journald.conf.d/max_disk_use.conf", "root", 0644, fmt.Sprintf(`[Journal]
+SystemMaxUse=%s
+`, userdatahelper.JournaldMaxUse)),
+		encodeFile("/etc/sysctl.d/k8s.conf", "root", 0644, `kernel.panic_on_oops = 1
+kernel.panic = 10
+vm.overcommit_memory = 1
+`),
+		encodeFile("/proc/sys/kernel/panic_on_oops", "root", 0644, "1\n"),
+		encodeFile("/proc/sys/kernel/panic", "root", 0644, "10\n"),
+		encodeFile("/proc/sys/vm/overcommit_memory", "root", 0644, "1\n"),
+		encodeFile("/etc/kubernetes/bootstrap.kubeconfig", "root", 0400, kubeconfigString),
+		encodeFile("/etc/kubernetes/cloud-config", "root", 0400, cpConfig+"\n"),   // the endline is there to perfectly preserve previous formatting
+		encodeFile("/etc/kubernetes/ca.crt", "root", 0644, kubernetesCACert+"\n"), // dito
+	}
+
+	if strings.Contains(machineSpec.Versions.ContainerRuntime.Version, "1.12") {
+		files = append(files,
+			encodeFile("/etc/coreos/docker-1.12", "root", 0644, "yes\n"),
+		)
+	}
+
+	files = append(files,
+		encodeFile("/etc/hostname", "root", 0600, machineSpec.Name),
+		encodeFileOwnedByRoot("/etc/ssh/sshd_config", "root", 0600, `# Use most defaults for sshd configuration.
+Subsystem sftp internal-sftp
+ClientAliveInterval 180
+UseDNS no
+UsePAM yes
+PrintLastLog no # handled by PAM
+PrintMotd no # handled by PAM
+PasswordAuthentication no
+ChallengeResponseAuthentication no
+`),
+	)
+
+	return files
+}
+
+func encodeFile(path, filesystem string, mode int, content string) ignitionTypes.File {
+	return ignitionTypes.File{
+		Node: ignitionTypes.Node{
+			Path:       path,
+			Filesystem: filesystem,
+		},
+		FileEmbedded1: ignitionTypes.FileEmbedded1{
+			Mode: mode,
+			Contents: ignitionTypes.FileContents{
+				Source: "data:," + dataurl.EscapeString(content),
+			},
+		},
+	}
+}
+
+func encodeFileOwnedByRoot(path, filesystem string, mode int, content string) ignitionTypes.File {
+	file := encodeFile(path, filesystem, mode, content)
+	file.Node.User = ignitionTypes.NodeUser{ID: ignitionUtils.IntToPtr(0)}
+	file.Node.Group = ignitionTypes.NodeGroup{ID: ignitionUtils.IntToPtr(0)}
+	return file
 }
 
 func networkdConfig(n *providerconfig.NetworkConfig) ignitionTypes.Networkd {
@@ -365,96 +432,4 @@ func systemdUnits(spec machinesv1alpha1.MachineSpec, cpName string, coreosConfig
 const ctTemplate = `
 storage:
   files:
-    - path: "/etc/systemd/journald.conf.d/max_disk_use.conf"
-      filesystem: root
-      mode: 0644
-      contents:
-        inline: |
-          [Journal]
-          SystemMaxUse={{ .JournaldMaxSize }}
-
-    - path: /etc/sysctl.d/k8s.conf
-      filesystem: root
-      mode: 0644
-      contents:
-        inline: |
-          kernel.panic_on_oops = 1
-          kernel.panic = 10
-          vm.overcommit_memory = 1
-
-    - path: /proc/sys/kernel/panic_on_oops
-      filesystem: root
-      mode: 0644
-      contents:
-        inline: |
-          1
-
-    - path: /proc/sys/kernel/panic
-      filesystem: root
-      mode: 0644
-      contents:
-        inline: |
-          10
-
-    - path: /proc/sys/vm/overcommit_memory
-      filesystem: root
-      mode: 0644
-      contents:
-        inline: |
-          1
-
-    - path: /etc/kubernetes/bootstrap.kubeconfig
-      filesystem: root
-      mode: 0400
-      contents:
-        inline: |
-{{ .Kubeconfig | indent 10 }}
-
-    - path: /etc/kubernetes/cloud-config
-      filesystem: root
-      mode: 0400
-      contents:
-        inline: |
-{{ .CloudConfig | indent 10 }}
-
-    - path: /etc/kubernetes/ca.crt
-      filesystem: root
-      mode: 0644
-      contents:
-        inline: |
-{{ .KubernetesCACert | indent 10 }}
-
-{{- if contains "1.12" .MachineSpec.Versions.ContainerRuntime.Version }}
-    - path: /etc/coreos/docker-1.12
-      mode: 0644
-      filesystem: root
-      contents:
-        inline: |
-          yes
-{{ end }}
-
-    - path: /etc/hostname
-      filesystem: root
-      mode: 0600
-      contents:
-        inline: '{{ .MachineSpec.Name }}'
-
-    - path: /etc/ssh/sshd_config
-      filesystem: root
-      mode: 0600
-      user:
-        id: 0
-      group:
-        id: 0
-      contents:
-        inline: |
-          # Use most defaults for sshd configuration.
-          Subsystem sftp internal-sftp
-          ClientAliveInterval 180
-          UseDNS no
-          UsePAM yes
-          PrintLastLog no # handled by PAM
-          PrintMotd no # handled by PAM
-          PasswordAuthentication no
-          ChallengeResponseAuthentication no
 `
