@@ -9,9 +9,7 @@ import (
 	"text/template"
 
 	"github.com/Masterminds/semver"
-	ctconfig "github.com/coreos/container-linux-config-transpiler/config"
 	ignitionUtils "github.com/coreos/ignition/config/util"
-	ignition "github.com/coreos/ignition/config/v2_1"
 	ignitionTypes "github.com/coreos/ignition/config/v2_1/types"
 	"github.com/golang/glog"
 	"github.com/vincent-petithory/dataurl"
@@ -74,17 +72,6 @@ func (p Provider) UserData(
 	ccProvider cloud.ConfigProvider,
 	clusterDNSIPs []net.IP,
 ) (string, error) {
-
-	tmpl, err := template.New("user-data").Funcs(machinetemplate.TxtFuncMap()).Parse(ctTemplate)
-	if err != nil {
-		return "", fmt.Errorf("failed to parse user-data template: %v", err)
-	}
-
-	kubeletVersion, err := semver.NewVersion(spec.Versions.Kubelet)
-	if err != nil {
-		return "", fmt.Errorf("invalid kubelet version: %v", err)
-	}
-
 	cpConfig, cpName, err := ccProvider.GetCloudConfig(spec)
 	if err != nil {
 		return "", fmt.Errorf("failed to get cloud config: %v", err)
@@ -114,52 +101,12 @@ func (p Provider) UserData(
 		return "", fmt.Errorf("error extracting cacert: %v", err)
 	}
 
-	data := struct {
-		MachineSpec       machinesv1alpha1.MachineSpec
-		ProviderConfig    *providerconfig.Config
-		CoreOSConfig      *Config
-		Kubeconfig        string
-		CloudProvider     string
-		CloudConfig       string
-		HyperkubeImageTag string
-		ClusterDNSIPs     []net.IP
-		KubernetesCACert  string
-		JournaldMaxSize   string
-	}{
-		MachineSpec:       spec,
-		ProviderConfig:    pconfig,
-		CoreOSConfig:      coreosConfig,
-		Kubeconfig:        kubeconfigString,
-		CloudProvider:     cpName,
-		CloudConfig:       cpConfig,
-		HyperkubeImageTag: fmt.Sprintf("v%s", kubeletVersion.String()),
-		ClusterDNSIPs:     clusterDNSIPs,
-		KubernetesCACert:  kubernetesCACert,
-		JournaldMaxSize:   userdatahelper.JournaldMaxUse,
-	}
-	b := &bytes.Buffer{}
-	err = tmpl.Execute(b, data)
-	if err != nil {
-		return "", fmt.Errorf("failed to execute user-data template: %v", err)
-	}
-
-	// Convert to ignition
-	cfg, ast, report := ctconfig.Parse(b.Bytes())
-	if len(report.Entries) > 0 {
-		return "", fmt.Errorf("failed to validate coreos cloud config: %s", report.String())
-	}
-
-	ignCfg, report := ctconfig.Convert(cfg, "", ast)
-	if len(report.Entries) > 0 {
-		return "", fmt.Errorf("failed to convert container linux config to ignition: %s", report.String())
-	}
-
-	systemdUnitsData, err := systemdUnits(spec, cpName, coreosConfig, kubeletVersion, clusterDNSIPs)
+	systemdUnitsData, err := systemdUnits(spec, cpName, coreosConfig, clusterDNSIPs)
 	if err != nil {
 		return "", fmt.Errorf("failed to generate systemd units data: %v", err)
 	}
 
-	iCfg := ignitionTypes.Config{
+	ignCfg := ignitionTypes.Config{
 		Ignition: ignitionTypes.Ignition{
 			Version: "2.1.0",
 		},
@@ -180,18 +127,11 @@ func (p Provider) UserData(
 		},
 	}
 
-	mergedConfig := ignition.Append(iCfg, ignCfg)
-	validationReport := mergedConfig.Validate()
-
-	if validationReport.IsFatal() {
-		return "", fmt.Errorf("ignition config validation failed:\n%s", validationReport.String())
+	if validationReport := ignCfg.Validate(); len(validationReport.Entries) > 0 {
+		glog.Warningf("ignition config validation failed:\n%s", validationReport.String())
 	}
 
-	if len(validationReport.Entries) > 0 {
-		glog.Warningf("ignition config validation:\n%s", validationReport.String())
-	}
-
-	out, err := json.MarshalIndent(mergedConfig, "", "  ")
+	out, err := json.MarshalIndent(ignCfg, "", "  ")
 	if err != nil {
 		return "", fmt.Errorf("failed to marshal ignition config: %v", err)
 	}
@@ -387,7 +327,12 @@ WantedBy=multi-user.target
 	return b.String(), nil
 }
 
-func systemdUnits(spec machinesv1alpha1.MachineSpec, cpName string, coreosConfig *Config, kubeletVersion *semver.Version, clusterDNSIPs []net.IP) ([]ignitionTypes.Unit, error) {
+func systemdUnits(spec machinesv1alpha1.MachineSpec, cpName string, coreosConfig *Config, clusterDNSIPs []net.IP) ([]ignitionTypes.Unit, error) {
+	kubeletVersion, err := semver.NewVersion(spec.Versions.Kubelet)
+	if err != nil {
+		return nil, fmt.Errorf("invalid kubelet version: %v", err)
+	}
+
 	kubeletServiceContent, err := kubeletService(spec, cpName, kubeletVersion, clusterDNSIPs)
 	if err != nil {
 		return nil, err
@@ -428,8 +373,3 @@ func systemdUnits(spec machinesv1alpha1.MachineSpec, cpName string, coreosConfig
 
 	return units, nil
 }
-
-const ctTemplate = `
-storage:
-  files:
-`

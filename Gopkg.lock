@@ -54,21 +54,6 @@
   revision = "6a2fe990e08303c82d966297ddb29a58678a4783"
 
 [[projects]]
-  digest = "1:dfc48e1a293a468126069586733806f62cbf485d87780881ea9106cdb68d38bb"
-  name = "github.com/ajeddeloh/yaml"
-  packages = ["."]
-  pruneopts = "NUT"
-  revision = "6b94386aeefd8c4b8470aee72bfca084c2f91da9"
-
-[[projects]]
-  branch = "master"
-  digest = "1:fdd419e104ec26bb5bd63cc62637c640453ed2929a7453f3afadbd9a0223da66"
-  name = "github.com/alecthomas/units"
-  packages = ["."]
-  pruneopts = "NUT"
-  revision = "2efee857e7cfd4f3d0138cc3cbb1b4966962b93a"
-
-[[projects]]
   digest = "1:975108e8d4f5dab096fc991326e96a5716ee8d02e5e7386bb4796171afc4ab9a"
   name = "github.com/aokoli/goutils"
   packages = ["."]
@@ -122,22 +107,6 @@
   revision = "3a771d992973f24aa725d07868b467d1ddfceafb"
 
 [[projects]]
-  digest = "1:15173ac9caac43ba3a8990716158f5fd08174293e259d0a9e67f6fc98cc39d35"
-  name = "github.com/coreos/container-linux-config-transpiler"
-  packages = [
-    "config",
-    "config/astyaml",
-    "config/platform",
-    "config/templating",
-    "config/types",
-    "config/types/util",
-    "internal/util",
-  ]
-  pruneopts = "NUT"
-  revision = "b76ab0b2d66ff1ac6902f4fe118a02c1bed6e5ce"
-  version = "v0.6.1"
-
-[[projects]]
   digest = "1:0ef770954bca104ee99b3b6b7f9b240605ac03517d9f98cbc1893daa03f3c038"
   name = "github.com/coreos/go-semver"
   packages = ["semver"]
@@ -154,22 +123,14 @@
   version = "v16"
 
 [[projects]]
-  digest = "1:82de8276efe8ad87b2e26723214fbf36d60d099acbc2236e55b0817e5773e3e1"
+  digest = "1:9e5bd513f4aeb4c8fd937979289f528dcf9a57129e9572b8f53e6bdfa378f012"
   name = "github.com/coreos/ignition"
   packages = [
     "config/shared/errors",
     "config/shared/validations",
     "config/util",
-    "config/v1",
-    "config/v1/types",
-    "config/v2_0",
-    "config/v2_0/types",
-    "config/v2_1",
     "config/v2_1/types",
     "config/v2_3_experimental/types",
-    "config/validate",
-    "config/validate/astjson",
-    "config/validate/astnode",
     "config/validate/report",
   ]
   pruneopts = "NUT"
@@ -1018,9 +979,7 @@
     "github.com/aws/aws-sdk-go/aws/session",
     "github.com/aws/aws-sdk-go/service/ec2",
     "github.com/aws/aws-sdk-go/service/iam",
-    "github.com/coreos/container-linux-config-transpiler/config",
     "github.com/coreos/ignition/config/util",
-    "github.com/coreos/ignition/config/v2_1",
     "github.com/coreos/ignition/config/v2_1/types",
     "github.com/digitalocean/godo",
     "github.com/go-test/deep",
@@ -1048,6 +1007,7 @@
     "github.com/pmezard/go-difflib/difflib",
     "github.com/prometheus/client_golang/prometheus",
     "github.com/prometheus/client_golang/prometheus/promhttp",
+    "github.com/vincent-petithory/dataurl",
     "github.com/vmware/govmomi",
     "github.com/vmware/govmomi/find",
     "github.com/vmware/govmomi/object",

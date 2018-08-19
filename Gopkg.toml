@@ -23,15 +23,6 @@ required = [
   version = "v2.14.*"
 
 [[constraint]]
-  name = "github.com/coreos/container-linux-config-transpiler"
-  version = "v0.6.*"
-
-# For container-linux-config-transpiler
-[[override]]
-  name = "github.com/ajeddeloh/yaml"
-  revision = "6b94386aeefd8c4b8470aee72bfca084c2f91da9"
-
-[[constraint]]
   name = "k8s.io/apimachinery"
   branch = "release-1.10"
 
