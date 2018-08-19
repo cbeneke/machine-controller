@@ -9,6 +9,9 @@ import (
 
 	"github.com/Masterminds/semver"
 	ctconfig "github.com/coreos/container-linux-config-transpiler/config"
+	ignition "github.com/coreos/ignition/config/v2_1"
+	ignitionTypes "github.com/coreos/ignition/config/v2_1/types"
+	"github.com/golang/glog"
 	"k8s.io/apimachinery/pkg/runtime"
 	clientcmdapi "k8s.io/client-go/tools/clientcmd/api"
 
@@ -148,7 +151,24 @@ func (p Provider) UserData(
 		return "", fmt.Errorf("failed to convert container linux config to ignition: %s", report.String())
 	}
 
-	out, err := json.MarshalIndent(ignCfg, "", "  ")
+	iCfg := ignitionTypes.Config{
+		Ignition: ignitionTypes.Ignition{
+			Version: "2.1.0",
+		},
+	}
+
+	mergedConfig := ignition.Append(iCfg, ignCfg)
+	validationReport := mergedConfig.Validate()
+
+	if validationReport.IsFatal() {
+		return "", fmt.Errorf("ignition config validation failed:\n%s", validationReport.String())
+	}
+
+	if len(validationReport.Entries) > 0 {
+		glog.Warningf("ignition config validation:\n%s", validationReport.String())
+	}
+
+	out, err := json.MarshalIndent(mergedConfig, "", "  ")
 	if err != nil {
 		return "", fmt.Errorf("failed to marshal ignition config: %v", err)
 	}

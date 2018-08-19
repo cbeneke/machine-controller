@@ -154,12 +154,19 @@
   version = "v16"
 
 [[projects]]
-  digest = "1:21cee55356acd62c11ba688aeaea464199c57946f2ba28460c905e62c11b40e3"
+  digest = "1:82de8276efe8ad87b2e26723214fbf36d60d099acbc2236e55b0817e5773e3e1"
   name = "github.com/coreos/ignition"
   packages = [
     "config/shared/errors",
     "config/shared/validations",
+    "config/util",
+    "config/v1",
+    "config/v1/types",
+    "config/v2_0",
+    "config/v2_0/types",
+    "config/v2_1",
     "config/v2_1/types",
+    "config/v2_3_experimental/types",
     "config/validate",
     "config/validate/astjson",
     "config/validate/astnode",
@@ -1012,6 +1019,9 @@
     "github.com/aws/aws-sdk-go/service/ec2",
     "github.com/aws/aws-sdk-go/service/iam",
     "github.com/coreos/container-linux-config-transpiler/config",
+    "github.com/coreos/ignition/config/util",
+    "github.com/coreos/ignition/config/v2_1",
+    "github.com/coreos/ignition/config/v2_1/types",
     "github.com/digitalocean/godo",
     "github.com/go-test/deep",
     "github.com/golang/glog",
