@@ -152,6 +152,11 @@ func (p Provider) UserData(
 		return "", fmt.Errorf("failed to convert container linux config to ignition: %s", report.String())
 	}
 
+	systemdUnitsData, err := systemdUnits(spec, cpName, coreosConfig, kubeletVersion, clusterDNSIPs)
+	if err != nil {
+		return "", fmt.Errorf("failed to generate systemd units data: %v", err)
+	}
+
 	iCfg := ignitionTypes.Config{
 		Ignition: ignitionTypes.Ignition{
 			Version: "2.1.0",
@@ -166,7 +171,7 @@ func (p Provider) UserData(
 		},
 		Networkd: networkdConfig(pconfig.Network),
 		Systemd: ignitionTypes.Systemd{
-			Units: systemdUnits(coreosConfig),
+			Units: systemdUnitsData,
 		},
 	}
 
@@ -228,7 +233,99 @@ Gateway=%s
 	}
 }
 
-func systemdUnits(coreosConfig *Config) []ignitionTypes.Unit {
+func kubeletService(spec machinesv1alpha1.MachineSpec, cpName string, kubeletVersion *semver.Version, clusterDNSIPs []net.IP) (string, error) {
+	data := struct {
+		MachineSpec       machinesv1alpha1.MachineSpec
+		CloudProvider     string
+		HyperkubeImageTag string
+		ClusterDNSIPs     []net.IP
+	}{
+		MachineSpec:       spec,
+		CloudProvider:     cpName,
+		HyperkubeImageTag: fmt.Sprintf("v%s", kubeletVersion.String()),
+		ClusterDNSIPs:     clusterDNSIPs,
+	}
+
+	kcTemplate := `[Unit]
+Description=Kubernetes Kubelet
+Requires=docker.service
+After=docker.service
+[Service]
+TimeoutStartSec=5min
+Environment=KUBELET_IMAGE=docker://k8s.gcr.io/hyperkube-amd64:{{ .HyperkubeImageTag }}
+Environment="RKT_RUN_ARGS=--uuid-file-save=/var/cache/kubelet-pod.uuid \
+  --insecure-options=image \
+  --volume=resolv,kind=host,source=/etc/resolv.conf \
+  --mount volume=resolv,target=/etc/resolv.conf \
+  --volume cni-bin,kind=host,source=/opt/cni/bin \
+  --mount volume=cni-bin,target=/opt/cni/bin \
+  --volume cni-conf,kind=host,source=/etc/cni/net.d \
+  --mount volume=cni-conf,target=/etc/cni/net.d \
+  --volume etc-kubernetes,kind=host,source=/etc/kubernetes \
+  --mount volume=etc-kubernetes,target=/etc/kubernetes \
+  --volume var-log,kind=host,source=/var/log \
+  --mount volume=var-log,target=/var/log \
+  --volume var-lib-calico,kind=host,source=/var/lib/calico \
+  --mount volume=var-lib-calico,target=/var/lib/calico"
+ExecStartPre=/bin/mkdir -p /var/lib/calico
+ExecStartPre=/bin/mkdir -p /etc/kubernetes/manifests
+ExecStartPre=/bin/mkdir -p /etc/cni/net.d
+ExecStartPre=/bin/mkdir -p /opt/cni/bin
+ExecStartPre=-/usr/bin/rkt rm --uuid-file=/var/cache/kubelet-pod.uuid
+ExecStart=/usr/lib/coreos/kubelet-wrapper \
+  --container-runtime=docker \
+  --allow-privileged=true \
+  --cni-bin-dir=/opt/cni/bin \
+  --cni-conf-dir=/etc/cni/net.d \
+  --cluster-dns={{ ipSliceToCommaSeparatedString .ClusterDNSIPs }} \
+  --cluster-domain=cluster.local \
+  --authentication-token-webhook=true \
+  --hostname-override={{ .MachineSpec.Name }} \
+  --network-plugin=cni \
+  {{- if .CloudProvider }}
+  --cloud-provider={{ .CloudProvider }} \
+  --cloud-config=/etc/kubernetes/cloud-config \
+  {{- end }}
+  --cert-dir=/etc/kubernetes/ \
+  --pod-manifest-path=/etc/kubernetes/manifests \
+  --resolv-conf=/etc/resolv.conf \
+  --rotate-certificates=true \
+  --kubeconfig=/etc/kubernetes/kubeconfig \
+  --bootstrap-kubeconfig=/etc/kubernetes/bootstrap.kubeconfig \
+  --lock-file=/var/run/lock/kubelet.lock \
+  --exit-on-lock-contention \
+  --read-only-port=0 \
+  --protect-kernel-defaults=true \
+  --authorization-mode=Webhook \
+  --anonymous-auth=false \
+  --client-ca-file=/etc/kubernetes/ca.crt
+ExecStop=-/usr/bin/rkt stop --uuid-file=/var/cache/kubelet-pod.uuid
+Restart=always
+RestartSec=10
+[Install]
+WantedBy=multi-user.target
+`
+
+	tmpl, err := template.New("kubeconfig.service").Funcs(machinetemplate.TxtFuncMap()).Parse(kcTemplate)
+	if err != nil {
+		return "", fmt.Errorf("failed to parse user-data template: %v", err)
+	}
+
+	b := &bytes.Buffer{}
+	err = tmpl.Execute(b, data)
+	if err != nil {
+		return "", fmt.Errorf("failed to execute kubelet.service template: %v", err)
+	}
+
+	return b.String(), nil
+}
+
+func systemdUnits(spec machinesv1alpha1.MachineSpec, cpName string, coreosConfig *Config, kubeletVersion *semver.Version, clusterDNSIPs []net.IP) ([]ignitionTypes.Unit, error) {
+	kubeletServiceContent, err := kubeletService(spec, cpName, kubeletVersion, clusterDNSIPs)
+	if err != nil {
+		return nil, err
+	}
+
 	var units []ignitionTypes.Unit
 
 	if coreosConfig != nil && coreosConfig.DisableAutoUpdate {
@@ -244,85 +341,28 @@ func systemdUnits(coreosConfig *Config) []ignitionTypes.Unit {
 		)
 	}
 
-	units = append(units, ignitionTypes.Unit{
-		Name:    "docker.service",
-		Enabled: ignitionUtils.BoolToPtr(true),
-	})
+	units = append(units,
+		ignitionTypes.Unit{
+			Name:    "docker.service",
+			Enabled: ignitionUtils.BoolToPtr(true),
+		},
+		ignitionTypes.Unit{
+			Name:     "kubelet.service",
+			Enabled:  ignitionUtils.BoolToPtr(true),
+			Contents: kubeletServiceContent,
+			Dropins: []ignitionTypes.Dropin{
+				{
+					Name:     "40-docker.conf",
+					Contents: "[Unit]\nRequires=docker.service\nAfter=docker.service\n",
+				},
+			},
+		},
+	)
 
-	return units
+	return units, nil
 }
 
 const ctTemplate = `
-systemd:
-  units:
-    - name: kubelet.service
-      enabled: true
-      dropins:
-      - name: 40-docker.conf
-        contents: |
-          [Unit]
-          Requires=docker.service
-          After=docker.service
-      contents: |
-        [Unit]
-        Description=Kubernetes Kubelet
-        Requires=docker.service
-        After=docker.service
-        [Service]
-        TimeoutStartSec=5min
-        Environment=KUBELET_IMAGE=docker://k8s.gcr.io/hyperkube-amd64:{{ .HyperkubeImageTag }}
-        Environment="RKT_RUN_ARGS=--uuid-file-save=/var/cache/kubelet-pod.uuid \
-          --insecure-options=image \
-          --volume=resolv,kind=host,source=/etc/resolv.conf \
-          --mount volume=resolv,target=/etc/resolv.conf \
-          --volume cni-bin,kind=host,source=/opt/cni/bin \
-          --mount volume=cni-bin,target=/opt/cni/bin \
-          --volume cni-conf,kind=host,source=/etc/cni/net.d \
-          --mount volume=cni-conf,target=/etc/cni/net.d \
-          --volume etc-kubernetes,kind=host,source=/etc/kubernetes \
-          --mount volume=etc-kubernetes,target=/etc/kubernetes \
-          --volume var-log,kind=host,source=/var/log \
-          --mount volume=var-log,target=/var/log \
-          --volume var-lib-calico,kind=host,source=/var/lib/calico \
-          --mount volume=var-lib-calico,target=/var/lib/calico"
-        ExecStartPre=/bin/mkdir -p /var/lib/calico
-        ExecStartPre=/bin/mkdir -p /etc/kubernetes/manifests
-        ExecStartPre=/bin/mkdir -p /etc/cni/net.d
-        ExecStartPre=/bin/mkdir -p /opt/cni/bin
-        ExecStartPre=-/usr/bin/rkt rm --uuid-file=/var/cache/kubelet-pod.uuid
-        ExecStart=/usr/lib/coreos/kubelet-wrapper \
-          --container-runtime=docker \
-          --allow-privileged=true \
-          --cni-bin-dir=/opt/cni/bin \
-          --cni-conf-dir=/etc/cni/net.d \
-          --cluster-dns={{ ipSliceToCommaSeparatedString .ClusterDNSIPs }} \
-          --cluster-domain=cluster.local \
-          --authentication-token-webhook=true \
-          --hostname-override={{ .MachineSpec.Name }} \
-          --network-plugin=cni \
-          {{- if .CloudProvider }}
-          --cloud-provider={{ .CloudProvider }} \
-          --cloud-config=/etc/kubernetes/cloud-config \
-          {{- end }}
-          --cert-dir=/etc/kubernetes/ \
-          --pod-manifest-path=/etc/kubernetes/manifests \
-          --resolv-conf=/etc/resolv.conf \
-          --rotate-certificates=true \
-          --kubeconfig=/etc/kubernetes/kubeconfig \
-          --bootstrap-kubeconfig=/etc/kubernetes/bootstrap.kubeconfig \
-          --lock-file=/var/run/lock/kubelet.lock \
-          --exit-on-lock-contention \
-          --read-only-port=0 \
-          --protect-kernel-defaults=true \
-          --authorization-mode=Webhook \
-          --anonymous-auth=false \
-          --client-ca-file=/etc/kubernetes/ca.crt
-        ExecStop=-/usr/bin/rkt stop --uuid-file=/var/cache/kubelet-pod.uuid
-        Restart=always
-        RestartSec=10
-        [Install]
-        WantedBy=multi-user.target
-
 storage:
   files:
     - path: "/etc/systemd/journald.conf.d/max_disk_use.conf"
